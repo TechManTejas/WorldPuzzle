@@ -1,0 +1,224 @@
+[
+  {
+    "file": "puzzle_prompts\\asia\\taj_mahal.txt",
+    "place": "Taj Mahal",
+    "country": "India",
+    "continent": "asia"
+  },
+  {
+    "file": "puzzle_prompts\\asia\\great_wall_of_china.txt",
+    "place": "Great Wall of China",
+    "country": "China",
+    "continent": "asia"
+  },
+  {
+    "file": "puzzle_prompts\\asia\\mount_fuji.txt",
+    "place": "Mount Fuji",
+    "country": "Japan",
+    "continent": "asia"
+  },
+  {
+    "file": "puzzle_prompts\\asia\\petra.txt",
+    "place": "Petra",
+    "country": "Jordan",
+    "continent": "asia"
+  },
+  {
+    "file": "puzzle_prompts\\asia\\angkor_wat.txt",
+    "place": "Angkor Wat",
+    "country": "Cambodia",
+    "continent": "asia"
+  },
+  {
+    "file": "puzzle_prompts\\asia\\burj_khalifa.txt",
+    "place": "Burj Khalifa",
+    "country": "UAE",
+    "continent": "asia"
+  },
+  {
+    "file": "puzzle_prompts\\europe\\eiffel_tower.txt",
+    "place": "Eiffel Tower",
+    "country": "France",
+    "continent": "europe"
+  },
+  {
+    "file": "puzzle_prompts\\europe\\colosseum.txt",
+    "place": "Colosseum",
+    "country": "Italy",
+    "continent": "europe"
+  },
+  {
+    "file": "puzzle_prompts\\europe\\sagrada_familia.txt",
+    "place": "Sagrada Familia",
+    "country": "Spain",
+    "continent": "europe"
+  },
+  {
+    "file": "puzzle_prompts\\europe\\neuschwanstein_castle.txt",
+    "place": "Neuschwanstein Castle",
+    "country": "Germany",
+    "continent": "europe"
+  },
+  {
+    "file": "puzzle_prompts\\europe\\santorini.txt",
+    "place": "Santorini",
+    "country": "Greece",
+    "continent": "europe"
+  },
+  {
+    "file": "puzzle_prompts\\europe\\big_ben.txt",
+    "place": "Big Ben",
+    "country": "United Kingdom",
+    "continent": "europe"
+  },
+  {
+    "file": "puzzle_prompts\\north_america\\statue_of_liberty.txt",
+    "place": "Statue of Liberty",
+    "country": "USA",
+    "continent": "north_america"
+  },
+  {
+    "file": "puzzle_prompts\\north_america\\golden_gate_bridge.txt",
+    "place": "Golden Gate Bridge",
+    "country": "USA",
+    "continent": "north_america"
+  },
+  {
+    "file": "puzzle_prompts\\north_america\\chichen_itza.txt",
+    "place": "Chichen Itza",
+    "country": "Mexico",
+    "continent": "north_america"
+  },
+  {
+    "file": "puzzle_prompts\\north_america\\niagara_falls.txt",
+    "place": "Niagara Falls",
+    "country": "Canada",
+    "continent": "north_america"
+  },
+  {
+    "file": "puzzle_prompts\\north_america\\grand_canyon.txt",
+    "place": "Grand Canyon",
+    "country": "USA",
+    "continent": "north_america"
+  },
+  {
+    "file": "puzzle_prompts\\south_america\\machu_picchu.txt",
+    "place": "Machu Picchu",
+    "country": "Peru",
+    "continent": "south_america"
+  },
+  {
+    "file": "puzzle_prompts\\south_america\\christ_the_redeemer.txt",
+    "place": "Christ the Redeemer",
+    "country": "Brazil",
+    "continent": "south_america"
+  },
+  {
+    "file": "puzzle_prompts\\south_america\\easter_island.txt",
+    "place": "Easter Island",
+    "country": "Chile",
+    "continent": "south_america"
+  },
+  {
+    "file": "puzzle_prompts\\south_america\\angel_falls.txt",
+    "place": "Angel Falls",
+    "country": "Venezuela",
+    "continent": "south_america"
+  },
+  {
+    "file": "puzzle_prompts\\south_america\\salar_de_uyuni.txt",
+    "place": "Salar de Uyuni",
+    "country": "Bolivia",
+    "continent": "south_america"
+  },
+  {
+    "file": "puzzle_prompts\\africa\\pyramids_of_giza.txt",
+    "place": "Pyramids of Giza",
+    "country": "Egypt",
+    "continent": "africa"
+  },
+  {
+    "file": "puzzle_prompts\\africa\\victoria_falls.txt",
+    "place": "Victoria Falls",
+    "country": "Zimbabwe",
+    "continent": "africa"
+  },
+  {
+    "file": "puzzle_prompts\\africa\\table_mountain.txt",
+    "place": "Table Mountain",
+    "country": "South Africa",
+    "continent": "africa"
+  },
+  {
+    "file": "puzzle_prompts\\africa\\mount_kilimanjaro.txt",
+    "place": "Mount Kilimanjaro",
+    "country": "Tanzania",
+    "continent": "africa"
+  },
+  {
+    "file": "puzzle_prompts\\africa\\sahara_desert_dunes.txt",
+    "place": "Sahara Desert Dunes",
+    "country": "Morocco",
+    "continent": "africa"
+  },
+  {
+    "file": "puzzle_prompts\\australia\\sydney_opera_house.txt",
+    "place": "Sydney Opera House",
+    "country": "Australia",
+    "continent": "australia"
+  },
+  {
+    "file": "puzzle_prompts\\australia\\uluru.txt",
+    "place": "Uluru",
+    "country": "Australia",
+    "continent": "australia"
+  },
+  {
+    "file": "puzzle_prompts\\australia\\great_barrier_reef.txt",
+    "place": "Great Barrier Reef",
+    "country": "Australia",
+    "continent": "australia"
+  },
+  {
+    "file": "puzzle_prompts\\australia\\twelve_apostles.txt",
+    "place": "Twelve Apostles",
+    "country": "Australia",
+    "continent": "australia"
+  },
+  {
+    "file": "puzzle_prompts\\australia\\hobbiton.txt",
+    "place": "Hobbiton",
+    "country": "New Zealand",
+    "continent": "australia"
+  },
+  {
+    "file": "puzzle_prompts\\antarctica\\penguin_colony.txt",
+    "place": "Penguin Colony",
+    "country": "Antarctica",
+    "continent": "antarctica"
+  },
+  {
+    "file": "puzzle_prompts\\antarctica\\iceberg_alley.txt",
+    "place": "Iceberg Alley",
+    "country": "Antarctica",
+    "continent": "antarctica"
+  },
+  {
+    "file": "puzzle_prompts\\antarctica\\mount_erebus.txt",
+    "place": "Mount Erebus",
+    "country": "Antarctica",
+    "continent": "antarctica"
+  },
+  {
+    "file": "puzzle_prompts\\antarctica\\paradise_harbour.txt",
+    "place": "Paradise Harbour",
+    "country": "Antarctica",
+    "continent": "antarctica"
+  },
+  {
+    "file": "puzzle_prompts\\antarctica\\lemaire_channel.txt",
+    "place": "Lemaire Channel",
+    "country": "Antarctica",
+    "continent": "antarctica"
+  }
+]
