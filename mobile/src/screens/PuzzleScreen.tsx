@@ -1,7 +1,6 @@
 import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -851,8 +850,6 @@ export function PuzzleScreen() {
       <View style={[StyleSheet.absoluteFill, { zIndex: 0 }]} pointerEvents="none">
         <AtmosphereBackground progress={dawnProgressOpacity} />
       </View>
-      <StatusBar style={statusLight ? "dark" : "light"} />
-
       <View
         style={{
           flex: 1,
