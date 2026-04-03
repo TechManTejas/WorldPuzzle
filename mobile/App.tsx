@@ -1,14 +1,15 @@
 import "./global.css";
-import { StatusBar } from "expo-status-bar";
-import { Text, View } from "react-native";
+import React from "react";
+import { View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { PuzzleScreen } from "./src/screens/PuzzleScreen";
 
 export default function App() {
   return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-xl font-bold text-blue-500">
-        WorldPuzzle — NativeWind is ready
-      </Text>
-      <StatusBar style="auto" />
-    </View>
+    <SafeAreaProvider>
+      <View className="flex-1 bg-void">
+        <PuzzleScreen />
+      </View>
+    </SafeAreaProvider>
   );
 }
