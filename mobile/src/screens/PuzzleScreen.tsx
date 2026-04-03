@@ -15,8 +15,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
+  applyCoinRowBlast,
+  applyCrownClearColor,
   applyHammerClear,
-  applyRowBlastClear,
   cloneBoard,
   COLS,
   createBoard,
@@ -26,6 +27,7 @@ import {
   swapCells,
   swapIfMatch,
   type Board,
+  type SpecialKind,
 } from "../game/match3Engine";
 
 const GEM_ASSETS = [
@@ -34,6 +36,11 @@ const GEM_ASSETS = [
   require("../../assets/icons8-jewel-48.png"),
   require("../../assets/icons8-emerald-48.png"),
 ] as const;
+
+const COIN_ASSET = require("../../assets/icons8-coin-48.png");
+const CROWN_ASSET = require("../../assets/icons8-crown-with-jewels-32.png");
+const HAMMER_ASSET = require("../../assets/icons8-hammer-60.png");
+const GOLD_POT_ASSET = require("../../assets/icons8-gold-pot-48.png");
 
 const TARGET = 420;
 const START_MOVES = 22;
@@ -45,11 +52,14 @@ const SPRING_SPAWN = { friction: 7, tension: 188 };
 const TAP_MOVE_MAX = 14;
 const SWIPE_MIN = 22;
 
-const STARTING_HAMMERS = 2;
-const STARTING_ROW_BLASTS = 2;
+const STARTING_HAMMERS = 3;
 
 type Status = "play" | "won" | "lost";
-type PMode = "none" | "hammer" | "row";
+type PMode = "none" | "hammer";
+
+function coinsForWin(scoreVal: number): number {
+  return 25 + Math.floor(scoreVal / 12);
+}
 
 type TileAnim = { x: Animated.Value; y: Animated.Value };
 
@@ -153,6 +163,7 @@ function buildPosMap(b: Board): Map<string, { r: number; c: number }> {
 
 type GemTileProps = {
   gemIndex: number;
+  special: SpecialKind | null;
   size: number;
   selected: boolean;
   dimmed: boolean;
@@ -165,6 +176,7 @@ type GemTileProps = {
 
 function GemTile({
   gemIndex,
+  special,
   size,
   selected,
   dimmed,
@@ -217,6 +229,12 @@ function GemTile({
   ).current;
 
   const safeIndex = Math.max(0, Math.min(gemIndex, GEM_ASSETS.length - 1));
+  const gemSource =
+    special === "coin"
+      ? COIN_ASSET
+      : special === "crown"
+        ? CROWN_ASSET
+        : GEM_ASSETS[safeIndex];
   const warmMix = Math.min(1, Math.max(0, warmth));
   const ring = selected
     ? warmMix > 0.5
@@ -254,7 +272,7 @@ function GemTile({
         }}
       >
         <Image
-          source={GEM_ASSETS[safeIndex]}
+          source={gemSource}
           style={{ width: "100%", height: "100%" }}
           contentFit="contain"
           transition={80}
@@ -280,11 +298,13 @@ export function PuzzleScreen() {
   const [status, setStatus] = useState<Status>("play");
   const [pMode, setPMode] = useState<PMode>("none");
   const [hammers, setHammers] = useState(STARTING_HAMMERS);
-  const [rowBlasts, setRowBlasts] = useState(STARTING_ROW_BLASTS);
   const [isResolving, setIsResolving] = useState(false);
+  const [totalCoins, setTotalCoins] = useState(0);
+  const [lastWinCoins, setLastWinCoins] = useState(0);
   const [progressTrackW, setProgressTrackW] = useState(0);
 
   const cascadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const winAwardedRef = useRef(false);
   const dawnProgressOpacity = useRef(new Animated.Value(0)).current;
   const dawnProgressLayout = useRef(new Animated.Value(0)).current;
   const tileAnimsRef = useRef<Map<string, TileAnim>>(new Map());
@@ -413,8 +433,19 @@ export function PuzzleScreen() {
   }, []);
 
   useEffect(() => {
-    if (status !== "play") return;
-    if (score >= TARGET) setStatus("won");
+    if (status !== "play") {
+      return;
+    }
+    if (score < TARGET) {
+      winAwardedRef.current = false;
+      return;
+    }
+    if (winAwardedRef.current) return;
+    winAwardedRef.current = true;
+    const earned = coinsForWin(score);
+    setLastWinCoins(earned);
+    setTotalCoins((c) => c + earned);
+    setStatus("won");
   }, [score, status]);
 
   useEffect(() => {
@@ -531,14 +562,70 @@ export function PuzzleScreen() {
     [cellStride, ensureAnim]
   );
 
-  /** Reliable swap: instant state update, no conflicting slide animation on swap. */
+  /** Swap: specials (coin / crown) activate without a 3-match; normals need matches. */
   const attemptSwap = useCallback(
     (r1: number, c1: number, r2: number, c2: number) => {
       const cur = boardRef.current;
       if (status !== "play" || isResolving) return;
       if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return;
+      if (pMode === "hammer") return;
 
-      if (pMode === "hammer" || pMode === "row") return;
+      const t1 = cur[r1][c1];
+      const t2 = cur[r2][c2];
+
+      if (t1.special && t2.special) {
+        playInvalidSwapNudge(r1, c1, r2, c2);
+        setSel(null);
+        return;
+      }
+
+      if (t1.special === "crown" || t2.special === "crown") {
+        const other = t1.special === "crown" ? t2 : t1;
+        if (other.special !== null) {
+          playInvalidSwapNudge(r1, c1, r2, c2);
+          setSel(null);
+          return;
+        }
+        const gemColor = other.gem;
+        const b = cloneBoard(cur);
+        swapCells(b, r1, c1, r2, c2);
+        const cleared = applyCrownClearColor(b, gemColor);
+        setScore((s) => s + cleared * 12);
+        setSel(null);
+        setBoard(b);
+        boardRef.current = b;
+        startCascadeFromBoard(b, true);
+        return;
+      }
+
+      if (t1.special === "coin" || t2.special === "coin") {
+        const other = t1.special === "coin" ? t2 : t1;
+        if (other.special !== null) {
+          playInvalidSwapNudge(r1, c1, r2, c2);
+          setSel(null);
+          return;
+        }
+        const b = cloneBoard(cur);
+        swapCells(b, r1, c1, r2, c2);
+        let coinRow = -1;
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (b[r][c].special === "coin") coinRow = r;
+          }
+        }
+        if (coinRow < 0) {
+          playInvalidSwapNudge(r1, c1, r2, c2);
+          setSel(null);
+          return;
+        }
+        const cleared = applyCoinRowBlast(b, coinRow);
+        setScore((s) => s + cleared * 12);
+        setSel(null);
+        setBoard(b);
+        boardRef.current = b;
+        startCascadeFromBoard(b, true);
+        return;
+      }
 
       const probe = cloneBoard(cur);
       swapCells(probe, r1, c1, r2, c2);
@@ -593,26 +680,6 @@ export function PuzzleScreen() {
         return;
       }
 
-      if (pMode === "row") {
-        if (rowBlasts <= 0) {
-          setPMode("none");
-          return;
-        }
-        const before = cloneBoard(boardRef.current);
-        const b = cloneBoard(boardRef.current);
-        const rowRes = applyRowBlastClear(b, r);
-        if (!rowRes) return;
-        setRowBlasts((n) => n - 1);
-        setPMode("none");
-        setScore((s) => s + rowRes.cleared * 10);
-        setMoves((m) => Math.max(0, m - 1));
-        setIsResolving(true);
-        playFalls(before, b, () => {
-          cascadeTimerRef.current = setTimeout(() => runCascade(cloneBoard(b)), 20);
-        });
-        return;
-      }
-
       if (!sel) {
         setSel({ r, c });
         return;
@@ -627,17 +694,7 @@ export function PuzzleScreen() {
       }
       attemptSwap(sel.r, sel.c, r, c);
     },
-    [
-      attemptSwap,
-      hammers,
-      isResolving,
-      pMode,
-      playFalls,
-      rowBlasts,
-      runCascade,
-      sel,
-      status,
-    ]
+    [attemptSwap, hammers, isResolving, pMode, playFalls, runCascade, sel, status]
   );
 
   const onGemSwipe = useCallback(
@@ -668,8 +725,9 @@ export function PuzzleScreen() {
     setStatus("play");
     setPMode("none");
     setHammers(STARTING_HAMMERS);
-    setRowBlasts(STARTING_ROW_BLASTS);
     setIsResolving(false);
+    setLastWinCoins(0);
+    winAwardedRef.current = false;
     runProgressSpring(0);
   };
 
@@ -722,6 +780,16 @@ export function PuzzleScreen() {
                   / {TARGET}
                 </Text>
               </Text>
+              <View style={styles.coinWallet}>
+                <Image
+                  source={GOLD_POT_ASSET}
+                  style={{ width: 22, height: 22 }}
+                  contentFit="contain"
+                />
+                <Text style={[styles.coinWalletTxt, { color: labelStrong }]}>
+                  {totalCoins}
+                </Text>
+              </View>
             </View>
           </View>
           <View
@@ -765,12 +833,10 @@ export function PuzzleScreen() {
               {moves}
             </Text>
           </View>
-          {pMode !== "none" && (
+          {pMode === "hammer" && (
             <View style={[styles.powerHintBox, { borderColor: C.panelBorder }]}>
               <Text style={[styles.powerHintTxt, { color: labelStrong }]}>
-                {pMode === "hammer"
-                  ? "Tap a gem to smash"
-                  : "Tap a gem — clear its row"}
+                Tap a gem to smash
               </Text>
             </View>
           )}
@@ -795,6 +861,7 @@ export function PuzzleScreen() {
                   <GemTile
                     key={tile.id}
                     gemIndex={tile.gem}
+                    special={tile.special}
                     size={cell}
                     selected={sel?.r === row && sel.c === col}
                     dimmed={inputLocked}
@@ -823,42 +890,46 @@ export function PuzzleScreen() {
               pressed && { opacity: 0.88 },
             ]}
           >
-            <Text style={[styles.powerChipLabel, { color: labelStrong }]}>
-              Hammer
-            </Text>
-            <Text style={[styles.powerChipCount, { color: labelMuted }]}>
-              ×{hammers}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setPMode((m) => (m === "row" ? "none" : "row"))}
-            disabled={rowBlasts <= 0 || inputLocked}
-            style={({ pressed }) => [
-              styles.powerChip,
-              rowBlasts <= 0 && styles.powerChipOff,
-              pMode === "row" && styles.powerChipOnRow,
-              pressed && { opacity: 0.88 },
-            ]}
-          >
-            <Text style={[styles.powerChipLabel, { color: labelStrong }]}>
-              Row blast
-            </Text>
-            <Text style={[styles.powerChipCount, { color: labelMuted }]}>
-              ×{rowBlasts}
-            </Text>
+            <Image
+              source={HAMMER_ASSET}
+              style={styles.hammerIcon}
+              contentFit="contain"
+            />
+            <View>
+              <Text style={[styles.powerChipLabel, { color: labelStrong }]}>
+                Hammer
+              </Text>
+              <Text style={[styles.powerChipCount, { color: labelMuted }]}>
+                ×{hammers}
+              </Text>
+            </View>
           </Pressable>
         </View>
 
         <Text style={[styles.footerHint, { color: hintColor }]}>
-          Tap to select, tap a neighbor to swap — or drag a gem toward another to swap.
-          Matches clear and new gems drop in.
+          Match 4 in a line for a coin (swap it to clear a row). Match 5+ for a crown
+          (swap onto a color to clear all of that gem). Drag or tap to swap.
         </Text>
       </View>
 
       <Modal visible={status === "won"} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <GlassCard padding={18} style={styles.modalCard} intensity={48}>
-            <Pressable onPress={resetRound} style={[styles.modalBtnWrap, { marginTop: 0 }]}>
+          <GlassCard padding={22} style={styles.modalCard} intensity={48}>
+            <View style={styles.winPotRow}>
+              <Image
+                source={GOLD_POT_ASSET}
+                style={{ width: 72, height: 72 }}
+                contentFit="contain"
+              />
+              <Text style={[styles.winTitle, { color: labelStrong }]}>Level clear</Text>
+              <Text style={[styles.winCoinsLine, { color: labelMuted }]}>
+                +{lastWinCoins} coins
+              </Text>
+              <Text style={[styles.winTotalLine, { color: labelMuted }]}>
+                Vault: {totalCoins} coins
+              </Text>
+            </View>
+            <Pressable onPress={resetRound} style={[styles.modalBtnWrap, { marginTop: 8 }]}>
               <LinearGradient
                 colors={[C.accent, "#ff6b35"]}
                 start={{ x: 0, y: 0 }}
@@ -934,6 +1005,18 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontVariant: ["tabular-nums"],
   },
+  coinWallet: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-end",
+  },
+  coinWalletTxt: {
+    fontSize: 16,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"],
+  },
   progressTrack: {
     marginTop: 14,
     height: 9,
@@ -1000,23 +1083,45 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   powerChip: {
-    minWidth: 124,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
+    minWidth: 200,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     borderRadius: 16,
     borderWidth: 1.5,
     borderColor: "rgba(255,255,255,0.2)",
     backgroundColor: "rgba(255,255,255,0.08)",
+    flexDirection: "row",
     alignItems: "center",
+    gap: 14,
+    justifyContent: "center",
+  },
+  hammerIcon: {
+    width: 44,
+    height: 44,
   },
   powerChipOff: { opacity: 0.38 },
   powerChipOn: {
     borderColor: "rgba(255, 180, 120, 0.65)",
     backgroundColor: "rgba(255, 140, 80, 0.15)",
   },
-  powerChipOnRow: {
-    borderColor: "rgba(125, 211, 252, 0.55)",
-    backgroundColor: "rgba(125, 211, 252, 0.12)",
+  winPotRow: {
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  winTitle: {
+    marginTop: 10,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  winCoinsLine: {
+    marginTop: 6,
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  winTotalLine: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: "600",
   },
   powerChipLabel: { fontSize: 13, fontWeight: "800" },
   powerChipCount: { marginTop: 2, fontSize: 11, fontWeight: "700" },

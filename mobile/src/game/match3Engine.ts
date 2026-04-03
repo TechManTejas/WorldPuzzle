@@ -2,7 +2,14 @@ export const ROWS = 6;
 export const COLS = 6;
 const NUM_GEM_TYPES = 4;
 
-export type Tile = { gem: number; id: string };
+export type SpecialKind = "coin" | "crown";
+
+export type Tile = {
+  gem: number;
+  id: string;
+  special: SpecialKind | null;
+};
+
 export type Board = Tile[][];
 
 let tileIdSeq = 0;
@@ -16,7 +23,11 @@ function randomGemType(): number {
 }
 
 function emptyCell(): Tile {
-  return { gem: -1, id: "" };
+  return { gem: -1, id: "", special: null };
+}
+
+function isNormal(t: Tile): boolean {
+  return t.gem >= 0 && t.special === null;
 }
 
 function wouldCreateMatch(
@@ -26,21 +37,21 @@ function wouldCreateMatch(
   gem: number
 ): boolean {
   if (c >= 2) {
-    const g1 = board[r][c - 1].gem;
-    const g2 = board[r][c - 2].gem;
-    if (g1 === gem && g2 === gem) return true;
+    const a = board[r][c - 1];
+    const b = board[r][c - 2];
+    if (isNormal(a) && isNormal(b) && a.gem === gem && b.gem === gem) return true;
   }
   if (r >= 2) {
-    const g1 = board[r - 1][c].gem;
-    const g2 = board[r - 2][c].gem;
-    if (g1 === gem && g2 === gem) return true;
+    const a = board[r - 1][c];
+    const b = board[r - 2][c];
+    if (isNormal(a) && isNormal(b) && a.gem === gem && b.gem === gem) return true;
   }
   return false;
 }
 
 export function createBoard(): Board {
   const board: Board = Array.from({ length: ROWS }, () =>
-    Array.from({ length: COLS }, () => ({ gem: 0, id: "" }))
+    Array.from({ length: COLS }, () => ({ gem: 0, id: "", special: null }))
   );
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -50,7 +61,7 @@ export function createBoard(): Board {
         gem = randomGemType();
         tries++;
       } while (tries < 40 && wouldCreateMatch(board, r, c, gem));
-      board[r][c] = { gem, id: newTileId() };
+      board[r][c] = { gem, id: newTileId(), special: null };
     }
   }
   return board;
@@ -66,16 +77,20 @@ export function findMatches(board: Board): Set<string> {
   for (let r = 0; r < ROWS; r++) {
     let c = 0;
     while (c < COLS) {
+      if (!isNormal(board[r][c])) {
+        c++;
+        continue;
+      }
       let len = 1;
       const g0 = board[r][c].gem;
       while (
         c + len < COLS &&
-        board[r][c + len].gem !== -1 &&
+        isNormal(board[r][c + len]) &&
         board[r][c + len].gem === g0
       ) {
         len++;
       }
-      if (len >= 3 && g0 !== -1) {
+      if (len >= 3) {
         for (let k = 0; k < len; k++) matched.add(key(r, c + k));
       }
       c += len;
@@ -85,16 +100,20 @@ export function findMatches(board: Board): Set<string> {
   for (let c = 0; c < COLS; c++) {
     let r = 0;
     while (r < ROWS) {
+      if (!isNormal(board[r][c])) {
+        r++;
+        continue;
+      }
       let len = 1;
       const g0 = board[r][c].gem;
       while (
         r + len < ROWS &&
-        board[r + len][c].gem !== -1 &&
+        isNormal(board[r + len][c]) &&
         board[r + len][c].gem === g0
       ) {
         len++;
       }
-      if (len >= 3 && g0 !== -1) {
+      if (len >= 3) {
         for (let k = 0; k < len; k++) matched.add(key(r + k, c));
       }
       r += len;
@@ -104,6 +123,77 @@ export function findMatches(board: Board): Set<string> {
   return matched;
 }
 
+/** Horizontal/vertical segments of 4+ → coin; 5+ → crown (crown wins that cell). */
+function planSpecialSpawns(board: Board, matched: Set<string>): {
+  crown: Set<string>;
+  coin: Set<string>;
+} {
+  const crown = new Set<string>();
+  const coin = new Set<string>();
+
+  const inM = (r: number, c: number) => matched.has(key(r, c));
+
+  for (let r = 0; r < ROWS; r++) {
+    let c = 0;
+    while (c < COLS) {
+      if (!inM(r, c) || !isNormal(board[r][c])) {
+        c++;
+        continue;
+      }
+      let len = 1;
+      const g0 = board[r][c].gem;
+      while (
+        c + len < COLS &&
+        inM(r, c + len) &&
+        isNormal(board[r][c + len]) &&
+        board[r][c + len].gem === g0
+      ) {
+        len++;
+      }
+      if (len >= 5) {
+        const mid = c + Math.floor((len - 1) / 2);
+        crown.add(key(r, mid));
+      } else if (len >= 4) {
+        const mid = c + Math.floor((len - 1) / 2);
+        coin.add(key(r, mid));
+      }
+      c += len;
+    }
+  }
+
+  for (let c = 0; c < COLS; c++) {
+    let r = 0;
+    while (r < ROWS) {
+      if (!inM(r, c) || !isNormal(board[r][c])) {
+        r++;
+        continue;
+      }
+      let len = 1;
+      const g0 = board[r][c].gem;
+      while (
+        r + len < ROWS &&
+        inM(r + len, c) &&
+        isNormal(board[r + len][c]) &&
+        board[r + len][c].gem === g0
+      ) {
+        len++;
+      }
+      if (len >= 5) {
+        const midR = r + Math.floor((len - 1) / 2);
+        crown.add(key(midR, c));
+      } else if (len >= 4) {
+        const midR = r + Math.floor((len - 1) / 2);
+        coin.add(key(midR, c));
+      }
+      r += len;
+    }
+  }
+
+  for (const k of crown) coin.delete(k);
+
+  return { crown, coin };
+}
+
 function refillColumn(board: Board, c: number): void {
   const surv: Tile[] = [];
   for (let r = 0; r < ROWS; r++) {
@@ -111,7 +201,11 @@ function refillColumn(board: Board, c: number): void {
   }
   const missing = ROWS - surv.length;
   for (let r = 0; r < missing; r++) {
-    board[r][c] = { gem: randomGemType(), id: newTileId() };
+    board[r][c] = {
+      gem: randomGemType(),
+      id: newTileId(),
+      special: null,
+    };
   }
   for (let r = 0; r < surv.length; r++) {
     board[missing + r][c] = surv[r];
@@ -119,9 +213,25 @@ function refillColumn(board: Board, c: number): void {
 }
 
 export function clearAndDrop(board: Board, matched: Set<string>): void {
+  const { crown, coin } = planSpecialSpawns(board, matched);
+
   for (const k of matched) {
     const [rs, cs] = k.split(",").map(Number);
-    board[rs][cs] = emptyCell();
+    if (crown.has(k)) {
+      board[rs][cs] = {
+        gem: 0,
+        id: newTileId(),
+        special: "crown",
+      };
+    } else if (coin.has(k)) {
+      board[rs][cs] = {
+        gem: 0,
+        id: newTileId(),
+        special: "coin",
+      };
+    } else {
+      board[rs][cs] = emptyCell();
+    }
   }
   for (let c = 0; c < COLS; c++) {
     refillColumn(board, c);
@@ -129,7 +239,13 @@ export function clearAndDrop(board: Board, matched: Set<string>): void {
 }
 
 export function cloneBoard(board: Board): Board {
-  return board.map((row) => row.map((t) => ({ gem: t.gem, id: t.id })));
+  return board.map((row) =>
+    row.map((t) => ({
+      gem: t.gem,
+      id: t.id,
+      special: t.special,
+    }))
+  );
 }
 
 export function swapCells(
@@ -155,7 +271,7 @@ export function isAdjacent(
   return dr + dc === 1;
 }
 
-/** Swap adjacent cells; keep swap only if it creates at least one match. */
+/** Swap adjacent cells; keep swap only if it creates at least one match (normal gems only). */
 export function swapIfMatch(
   board: Board,
   r1: number,
@@ -172,7 +288,34 @@ export function swapIfMatch(
   return true;
 }
 
-/** One clear-and-drop cycle. Returns null when the board has no matches. */
+/** Clears an entire row (coin activation). Returns tiles cleared. */
+export function applyCoinRowBlast(board: Board, row: number): number {
+  const matched = new Set<string>();
+  for (let c = 0; c < COLS; c++) {
+    if (board[row][c].gem !== -1) matched.add(key(row, c));
+  }
+  const n = matched.size;
+  if (n === 0) return 0;
+  clearAndDrop(board, matched);
+  return n;
+}
+
+/** Crown activation: crown + all normal gems of `gemType`. Returns tiles cleared. */
+export function applyCrownClearColor(board: Board, gemType: number): number {
+  const matched = new Set<string>();
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = board[r][c];
+      if (t.special === "crown") matched.add(key(r, c));
+      else if (isNormal(t) && t.gem === gemType) matched.add(key(r, c));
+    }
+  }
+  const n = matched.size;
+  if (n === 0) return 0;
+  clearAndDrop(board, matched);
+  return n;
+}
+
 export function resolveOneMatchStep(board: Board): {
   scoreDelta: number;
   clearedCount: number;
@@ -189,19 +332,4 @@ export function applyHammerClear(board: Board, r: number, c: number): boolean {
   if (board[r][c].gem === -1) return false;
   clearAndDrop(board, new Set<string>([key(r, c)]));
   return true;
-}
-
-/** Clears a full row of gems; returns cells cleared, or null if row empty. */
-export function applyRowBlastClear(
-  board: Board,
-  row: number
-): { cleared: number } | null {
-  const matched = new Set<string>();
-  for (let c = 0; c < COLS; c++) {
-    if (board[row][c].gem !== -1) matched.add(key(row, c));
-  }
-  if (matched.size === 0) return null;
-  const cleared = matched.size;
-  clearAndDrop(board, matched);
-  return { cleared };
 }
