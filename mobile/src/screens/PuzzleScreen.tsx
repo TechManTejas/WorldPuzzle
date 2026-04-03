@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Easing,
   Modal,
   PanResponder,
   Pressable,
@@ -309,6 +310,13 @@ export function PuzzleScreen() {
   const dawnProgressLayout = useRef(new Animated.Value(0)).current;
   const tileAnimsRef = useRef<Map<string, TileAnim>>(new Map());
 
+  const winOv = useRef(new Animated.Value(0)).current;
+  const winCard = useRef(new Animated.Value(0)).current;
+  const winPot = useRef(new Animated.Value(0)).current;
+  const winTitle = useRef(new Animated.Value(0)).current;
+  const lostOv = useRef(new Animated.Value(0)).current;
+  const lostCard = useRef(new Animated.Value(0)).current;
+
   const cell = Math.min(54, (width - 40) / COLS - 8);
   const cellStride = cell + GEM_MARGIN * 2;
 
@@ -452,6 +460,73 @@ export function PuzzleScreen() {
     if (status !== "play") return;
     if (moves <= 0 && score < TARGET) setStatus("lost");
   }, [moves, score, status]);
+
+  useEffect(() => {
+    if (status !== "won") {
+      winOv.setValue(0);
+      winCard.setValue(0);
+      winPot.setValue(0);
+      winTitle.setValue(0);
+      return;
+    }
+    winOv.setValue(0);
+    winCard.setValue(0);
+    winPot.setValue(0);
+    winTitle.setValue(0);
+    Animated.parallel([
+      Animated.timing(winOv, {
+        toValue: 1,
+        duration: 320,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(winCard, {
+        toValue: 1,
+        friction: 9,
+        tension: 78,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      Animated.parallel([
+        Animated.spring(winPot, {
+          toValue: 1,
+          friction: 6,
+          tension: 160,
+          useNativeDriver: true,
+        }),
+        Animated.timing(winTitle, {
+          toValue: 1,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    });
+  }, [status, winOv, winCard, winPot, winTitle]);
+
+  useEffect(() => {
+    if (status !== "lost") {
+      lostOv.setValue(0);
+      lostCard.setValue(0);
+      return;
+    }
+    lostOv.setValue(0);
+    lostCard.setValue(0);
+    Animated.parallel([
+      Animated.timing(lostOv, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(lostCard, {
+        toValue: 1,
+        friction: 9,
+        tension: 72,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [status, lostOv, lostCard]);
 
   const runCascade = useCallback(
     (initial: Board) => {
@@ -744,7 +819,32 @@ export function PuzzleScreen() {
 
   const labelMuted = statusLight ? "rgba(55,42,36,0.62)" : C.textMuted;
   const labelStrong = statusLight ? "rgba(38,28,22,0.96)" : C.text;
-  const hintColor = statusLight ? "rgba(55,42,36,0.5)" : "rgba(255,220,210,0.42)";
+
+  const winBackdropOpacity = winOv.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+  const winCardScale = winCard.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.86, 1],
+  });
+  const winPotScale = winPot.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.42, 1],
+  });
+  const winTitleShift = winTitle.interpolate({
+    inputRange: [0, 1],
+    outputRange: [16, 0],
+  });
+
+  const lostBackdropOpacity = lostOv.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+  const lostCardScale = lostCard.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.88, 1],
+  });
 
   return (
     <View style={{ flex: 1 }}>
@@ -877,14 +977,14 @@ export function PuzzleScreen() {
           ))}
         </View>
 
-        <View style={styles.powerRow}>
+        <View style={styles.bottomBar}>
           <Pressable
             onPress={() =>
               setPMode((m) => (m === "hammer" ? "none" : "hammer"))
             }
             disabled={hammers <= 0 || inputLocked}
             style={({ pressed }) => [
-              styles.powerChip,
+              styles.hammerChip,
               hammers <= 0 && styles.powerChipOff,
               pMode === "hammer" && styles.powerChipOn,
               pressed && { opacity: 0.88 },
@@ -895,72 +995,144 @@ export function PuzzleScreen() {
               style={styles.hammerIcon}
               contentFit="contain"
             />
-            <View>
-              <Text style={[styles.powerChipLabel, { color: labelStrong }]}>
-                Hammer
-              </Text>
-              <Text style={[styles.powerChipCount, { color: labelMuted }]}>
-                ×{hammers}
-              </Text>
-            </View>
+            <Text style={[styles.hammerCount, { color: labelStrong }]}>
+              x{hammers}
+            </Text>
           </Pressable>
         </View>
-
-        <Text style={[styles.footerHint, { color: hintColor }]}>
-          Match 4 in a line for a coin (swap it to clear a row). Match 5+ for a crown
-          (swap onto a color to clear all of that gem). Drag or tap to swap.
-        </Text>
       </View>
 
-      <Modal visible={status === "won"} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <GlassCard padding={22} style={styles.modalCard} intensity={48}>
-            <View style={styles.winPotRow}>
-              <Image
-                source={GOLD_POT_ASSET}
-                style={{ width: 72, height: 72 }}
-                contentFit="contain"
-              />
-              <Text style={[styles.winTitle, { color: labelStrong }]}>Level clear</Text>
-              <Text style={[styles.winCoinsLine, { color: labelMuted }]}>
-                +{lastWinCoins} coins
-              </Text>
-              <Text style={[styles.winTotalLine, { color: labelMuted }]}>
-                Vault: {totalCoins} coins
-              </Text>
-            </View>
-            <Pressable onPress={resetRound} style={[styles.modalBtnWrap, { marginTop: 8 }]}>
-              <LinearGradient
-                colors={[C.accent, "#ff6b35"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.modalBtnGrad}
+      <Modal visible={status === "won"} transparent animationType="none">
+        <View style={styles.modalOverlayFill}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                backgroundColor: "rgba(6,4,14,0.78)",
+                opacity: winBackdropOpacity,
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.modalCardWrap,
+              {
+                opacity: winCard,
+                transform: [{ scale: winCardScale }],
+              },
+            ]}
+          >
+            <View style={styles.modalGlowRing} />
+            <GlassCard padding={24} style={styles.modalCard} intensity={52}>
+              <View style={styles.winPotRing}>
+                <Animated.View
+                  style={{
+                    transform: [{ scale: winPotScale }],
+                  }}
+                >
+                  <Image
+                    source={GOLD_POT_ASSET}
+                    style={{ width: 88, height: 88 }}
+                    contentFit="contain"
+                  />
+                </Animated.View>
+              </View>
+              <Animated.View
+                style={{
+                  opacity: winTitle,
+                  transform: [{ translateY: winTitleShift }],
+                }}
               >
-                <Text style={styles.modalBtnText}>Play again</Text>
-              </LinearGradient>
-            </Pressable>
-          </GlassCard>
+                <Text style={[styles.winTitle, { color: labelStrong }]}>
+                  Level clear
+                </Text>
+                <Text style={[styles.winSubtitle, { color: labelMuted }]}>
+                  Nice run — rewards added to your vault
+                </Text>
+                <View style={styles.winStatRow}>
+                  <Text style={[styles.winCoinsLine, { color: C.accent }]}>
+                    +{lastWinCoins} coins
+                  </Text>
+                </View>
+                <Text style={[styles.winTotalLine, { color: labelMuted }]}>
+                  Vault · {totalCoins} coins
+                </Text>
+              </Animated.View>
+              <Animated.View style={{ opacity: winTitle }}>
+                <Pressable
+                  onPress={resetRound}
+                  style={({ pressed }) => [
+                    styles.modalBtnWrap,
+                    { marginTop: 22, opacity: pressed ? 0.92 : 1 },
+                  ]}
+                >
+                  <LinearGradient
+                    colors={["#ffb347", C.accent, "#ff5c3d"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.modalBtnGrad}
+                  >
+                    <Text style={styles.modalBtnText}>Play again</Text>
+                  </LinearGradient>
+                </Pressable>
+              </Animated.View>
+            </GlassCard>
+          </Animated.View>
         </View>
       </Modal>
 
-      <Modal visible={status === "lost"} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <GlassCard padding={22} style={styles.modalCard} intensity={44}>
-            <Text style={[styles.modalTitle, { color: labelStrong }]}>No moves left</Text>
-            <Text style={[styles.modalBody, { color: labelMuted }]}>
-              Try again — the board is reset and ready.
-            </Text>
-            <Pressable onPress={resetRound} style={styles.modalBtnWrap}>
-              <LinearGradient
-                colors={["#c4b5fd", "#a78bfa"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.modalBtnGrad}
+      <Modal visible={status === "lost"} transparent animationType="none">
+        <View style={styles.modalOverlayFill}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                backgroundColor: "rgba(10,6,22,0.82)",
+                opacity: lostBackdropOpacity,
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.modalCardWrap,
+              {
+                opacity: lostCard,
+                transform: [{ scale: lostCardScale }],
+              },
+            ]}
+          >
+            <GlassCard padding={24} style={styles.modalCardLost} intensity={46}>
+              <View style={styles.lostIconBlob}>
+                <Text style={styles.lostEmoji}>✦</Text>
+              </View>
+              <Text style={[styles.modalTitle, { color: labelStrong }]}>
+                No moves left
+              </Text>
+              <Text style={[styles.modalBody, { color: labelMuted }]}>
+                So close — tap below and give it another shot.
+              </Text>
+              <Pressable
+                onPress={resetRound}
+                style={({ pressed }) => [
+                  styles.modalBtnWrap,
+                  { marginTop: 20, opacity: pressed ? 0.92 : 1 },
+                ]}
               >
-                <Text style={[styles.modalBtnText, { color: "#1e1535" }]}>Try again</Text>
-              </LinearGradient>
-            </Pressable>
-          </GlassCard>
+                <LinearGradient
+                  colors={["#c4b5fd", "#8b5cf6"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.modalBtnGrad}
+                >
+                  <Text style={[styles.modalBtnText, { color: "#1a1030" }]}>
+                    Try again
+                  </Text>
+                </LinearGradient>
+              </Pressable>
+            </GlassCard>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -1075,74 +1247,118 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
   },
-  powerRow: {
+  bottomBar: {
     marginTop: 18,
+    width: "100%",
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    gap: 10,
+    alignItems: "center",
+    justifyContent: "flex-start",
   },
-  powerChip: {
-    minWidth: 200,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+  hammerChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderRadius: 16,
     borderWidth: 1.5,
     borderColor: "rgba(255,255,255,0.2)",
     backgroundColor: "rgba(255,255,255,0.08)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    justifyContent: "center",
   },
   hammerIcon: {
     width: 44,
     height: 44,
+  },
+  hammerCount: {
+    fontSize: 17,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
+    letterSpacing: 0.5,
   },
   powerChipOff: { opacity: 0.38 },
   powerChipOn: {
     borderColor: "rgba(255, 180, 120, 0.65)",
     backgroundColor: "rgba(255, 140, 80, 0.15)",
   },
-  winPotRow: {
+  winPotRing: {
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: 8,
   },
   winTitle: {
-    marginTop: 10,
-    fontSize: 22,
+    marginTop: 4,
+    fontSize: 26,
     fontWeight: "900",
+    textAlign: "center",
+    letterSpacing: -0.5,
+  },
+  winSubtitle: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  winStatRow: {
+    marginTop: 16,
+    alignItems: "center",
   },
   winCoinsLine: {
-    marginTop: 6,
-    fontSize: 20,
-    fontWeight: "800",
+    fontSize: 22,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
   },
   winTotalLine: {
-    marginTop: 4,
+    marginTop: 8,
     fontSize: 14,
     fontWeight: "600",
-  },
-  powerChipLabel: { fontSize: 13, fontWeight: "800" },
-  powerChipCount: { marginTop: 2, fontSize: 11, fontWeight: "700" },
-  footerHint: {
-    marginTop: 18,
     textAlign: "center",
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: "500",
-    paddingHorizontal: 8,
+    fontVariant: ["tabular-nums"],
   },
-  modalOverlay: {
+  modalOverlayFill: {
     flex: 1,
-    alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
-    backgroundColor: "rgba(6,4,14,0.55)",
+    alignItems: "center",
+    paddingHorizontal: 22,
+  },
+  modalCardWrap: {
+    width: "100%",
+    maxWidth: 352,
+    position: "relative",
+  },
+  modalGlowRing: {
+    position: "absolute",
+    top: -28,
+    alignSelf: "center",
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: "rgba(255, 140, 90, 0.14)",
+    opacity: 0.9,
   },
   modalCard: {
     width: "100%",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 200, 160, 0.35)",
+  },
+  modalCardLost: {
+    width: "100%",
     maxWidth: 340,
+    borderWidth: 1.5,
+    borderColor: "rgba(180, 170, 255, 0.35)",
+  },
+  lostIconBlob: {
+    alignSelf: "center",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(139, 92, 246, 0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  lostEmoji: {
+    fontSize: 26,
+    color: "rgba(200, 190, 255, 0.95)",
   },
   modalTitle: {
     textAlign: "center",
