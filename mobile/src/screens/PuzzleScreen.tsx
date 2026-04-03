@@ -1,7 +1,13 @@
 import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Animated,
   Easing,
@@ -29,6 +35,7 @@ import {
   type Board,
   type SpecialKind,
 } from "../game/match3Engine";
+import type { LevelDef } from "../game/levels";
 
 const GEM_ASSETS = [
   require("../../assets/icons8-diamond-48.png"),
@@ -42,17 +49,17 @@ const CROWN_ASSET = require("../../assets/icons8-crown-with-jewels-32.png");
 const HAMMER_ASSET = require("../../assets/icons8-hammer-60.png");
 const GOLD_POT_ASSET = require("../../assets/icons8-gold-pot-48.png");
 
-const TARGET = 420;
-const START_MOVES = 22;
 const GEM_MARGIN = 4;
 const CHAIN_STAGGER_MS = 42;
 const SWAP_PRE_CASCADE_MS = 64;
 const SPRING_FALL = { friction: 8, tension: 198 };
-const SPRING_SPAWN = { friction: 7, tension: 188 };
+const SPRING_SPAWN = { friction: 6, tension: 210 };
+const POP_MATCH_PEAK_MS = 80;
+const POP_MATCH_OUT_MS = 165;
+const POP_MATCH_PEAK_SCALE = 1.26;
+const POP_MATCH_STAGGER_MS = 32;
 const TAP_MOVE_MAX = 14;
 const SWIPE_MIN = 22;
-
-const STARTING_HAMMERS = 3;
 
 type Status = "play" | "won" | "lost";
 type PMode = "none" | "hammer";
@@ -61,7 +68,12 @@ function coinsForWin(scoreVal: number): number {
   return 25 + Math.floor(scoreVal / 12);
 }
 
-type TileAnim = { x: Animated.Value; y: Animated.Value };
+type TileAnim = {
+  x: Animated.Value;
+  y: Animated.Value;
+  popScale: Animated.Value;
+  popOpacity: Animated.Value;
+};
 
 const C = {
   bgTop: "#0d0b14",
@@ -75,6 +87,15 @@ const C = {
   boardBg: "rgba(12,10,24,0.92)",
   boardBorder: "rgba(255,255,255,0.14)",
   cellShadow: "rgba(0,0,0,0.35)",
+};
+
+/** Win modal — matches AtmosphereBackground sun / twilight progression */
+const WIN = {
+  backdrop: ["rgba(48, 22, 10, 0.92)", "rgba(92, 48, 22, 0.88)", "rgba(28, 14, 8, 0.94)"] as const,
+  title: "#2a1810",
+  subtitle: "rgba(95, 58, 38, 0.88)",
+  coins: "#c2410c",
+  vault: "rgba(75, 48, 32, 0.78)",
 };
 
 function AtmosphereBackground({ progress }: { progress: Animated.Value }) {
@@ -131,21 +152,41 @@ function GlassCard({
   style,
   intensity = 36,
   padding = 14,
+  warm = false,
 }: {
   children: React.ReactNode;
   style?: object;
   intensity?: number;
   padding?: number;
+  /** Sunset / dawn glass — matches score “warmth” */
+  warm?: boolean;
 }) {
   return (
     <View style={[styles.glassBorder, style]}>
+      {warm && (
+        <LinearGradient
+          colors={["rgba(255, 210, 170, 0.35)", "rgba(255, 165, 110, 0.12)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <BlurView
         pointerEvents="none"
         intensity={intensity}
-        tint="dark"
+        tint={warm ? "light" : "dark"}
         style={StyleSheet.absoluteFill}
       />
-      <View style={[styles.glassTint, { padding }]}>{children}</View>
+      <View
+        style={[
+          styles.glassTint,
+          { padding },
+          warm && { backgroundColor: "rgba(255, 230, 210, 0.14)" },
+        ]}
+      >
+        {children}
+      </View>
     </View>
   );
 }
@@ -161,6 +202,25 @@ function buildPosMap(b: Board): Map<string, { r: number; c: number }> {
   return m;
 }
 
+/** Tile ids present in `before` but not after (matched / cleared / hammered). */
+function collectRemovedTileIds(before: Board, after: Board): string[] {
+  const afterIds = new Set<string>();
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = after[r][c];
+      if (t.gem >= 0 && t.id) afterIds.add(t.id);
+    }
+  }
+  const removed: string[] = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = before[r][c];
+      if (t.gem >= 0 && t.id && !afterIds.has(t.id)) removed.push(t.id);
+    }
+  }
+  return removed;
+}
+
 type GemTileProps = {
   gemIndex: number;
   special: SpecialKind | null;
@@ -170,6 +230,8 @@ type GemTileProps = {
   warmth: number;
   slideX: Animated.Value;
   slideY: Animated.Value;
+  popScale: Animated.Value;
+  popOpacity: Animated.Value;
   onTap: () => void;
   onSwipe: (dr: number, dc: number) => void;
 };
@@ -183,10 +245,16 @@ function GemTile({
   warmth,
   slideX,
   slideY,
+  popScale,
+  popOpacity,
   onTap,
   onSwipe,
 }: GemTileProps) {
   const scale = useRef(new Animated.Value(1)).current;
+  const tileScale = useMemo(
+    () => Animated.multiply(scale, popScale),
+    [scale, popScale]
+  );
   const handlers = useRef({ onTap, onSwipe, dimmed });
   handlers.current = { onTap, onSwipe, dimmed };
 
@@ -264,10 +332,11 @@ function GemTile({
           shadowOpacity: selected ? 0.45 : 0.2,
           shadowRadius: selected ? 10 : 4,
           elevation: selected ? 7 : 3,
+          opacity: popOpacity,
           transform: [
             { translateX: slideX },
             { translateY: slideY },
-            { scale },
+            { scale: tileScale },
           ],
         }}
       >
@@ -282,7 +351,25 @@ function GemTile({
   );
 }
 
-export function PuzzleScreen() {
+export type PuzzleScreenProps = {
+  level: LevelDef;
+  totalCoins: number;
+  onCoinsEarned: (amount: number) => void;
+  onBack: () => void;
+  onLevelCleared: (levelId: number) => void;
+  hasNextLevel: boolean;
+  onNextLevel: () => void;
+};
+
+export function PuzzleScreen({
+  level,
+  totalCoins,
+  onCoinsEarned,
+  onBack,
+  onLevelCleared,
+  hasNextLevel,
+  onNextLevel,
+}: PuzzleScreenProps) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
 
@@ -292,14 +379,13 @@ export function PuzzleScreen() {
     boardRef.current = board;
   }, [board]);
 
-  const [moves, setMoves] = useState(START_MOVES);
+  const [moves, setMoves] = useState(level.moves);
   const [score, setScore] = useState(0);
   const [sel, setSel] = useState<{ r: number; c: number } | null>(null);
   const [status, setStatus] = useState<Status>("play");
   const [pMode, setPMode] = useState<PMode>("none");
-  const [hammers, setHammers] = useState(STARTING_HAMMERS);
+  const [hammers, setHammers] = useState(level.hammers);
   const [isResolving, setIsResolving] = useState(false);
-  const [totalCoins, setTotalCoins] = useState(0);
   const [lastWinCoins, setLastWinCoins] = useState(0);
   const [progressTrackW, setProgressTrackW] = useState(0);
 
@@ -313,19 +399,28 @@ export function PuzzleScreen() {
   const winCard = useRef(new Animated.Value(0)).current;
   const winPot = useRef(new Animated.Value(0)).current;
   const winTitle = useRef(new Animated.Value(0)).current;
+  const winPotShake = useRef(new Animated.Value(0)).current;
+  const winGlowPulse = useRef(new Animated.Value(1)).current;
+  const winPotShakeLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  const winGlowLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const lostOv = useRef(new Animated.Value(0)).current;
   const lostCard = useRef(new Animated.Value(0)).current;
 
   const cell = Math.min(54, (width - 40) / COLS - 8);
   const cellStride = cell + GEM_MARGIN * 2;
 
-  const scoreProgress = Math.min(1, score / TARGET);
+  const scoreProgress = Math.min(1, score / level.targetScore);
   const statusLight = scoreProgress > 0.55 || status === "won";
 
   const ensureAnim = useCallback((id: string): TileAnim => {
     let a = tileAnimsRef.current.get(id);
     if (!a) {
-      a = { x: new Animated.Value(0), y: new Animated.Value(0) };
+      a = {
+        x: new Animated.Value(0),
+        y: new Animated.Value(0),
+        popScale: new Animated.Value(1),
+        popOpacity: new Animated.Value(1),
+      };
       tileAnimsRef.current.set(id, a);
     }
     return a;
@@ -333,34 +428,64 @@ export function PuzzleScreen() {
 
   const playFalls = useCallback(
     (before: Board, after: Board, then: () => void) => {
-      const beforePos = buildPosMap(before);
-      const afterIds = new Set<string>();
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          const t = after[r][c];
-          if (t.gem >= 0 && t.id) afterIds.add(t.id);
+      const removedIds = collectRemovedTileIds(before, after);
+
+      const applyBoardAndSprings = () => {
+        const beforePos = buildPosMap(before);
+        const afterIds = new Set<string>();
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const t = after[r][c];
+            if (t.gem >= 0 && t.id) afterIds.add(t.id);
+          }
         }
-      }
-      for (const id of tileAnimsRef.current.keys()) {
-        if (!afterIds.has(id)) tileAnimsRef.current.delete(id);
-      }
+        for (const id of tileAnimsRef.current.keys()) {
+          if (!afterIds.has(id)) tileAnimsRef.current.delete(id);
+        }
 
-      const springs: Animated.CompositeAnimation[] = [];
+        const springs: Animated.CompositeAnimation[] = [];
 
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          const t = after[r][c];
-          if (t.gem < 0 || !t.id) continue;
-          const a = ensureAnim(t.id);
-          const prev = beforePos.get(t.id);
-          if (prev) {
-            const dx = (prev.c - c) * cellStride;
-            const dy = (prev.r - r) * cellStride;
-            a.x.setValue(dx);
-            a.y.setValue(dy);
-            if (dx !== 0 || dy !== 0) {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const t = after[r][c];
+            if (t.gem < 0 || !t.id) continue;
+            const a = ensureAnim(t.id);
+            a.popScale.setValue(1);
+            a.popOpacity.setValue(1);
+            const prev = beforePos.get(t.id);
+            if (prev) {
+              const dx = (prev.c - c) * cellStride;
+              const dy = (prev.r - r) * cellStride;
+              a.x.setValue(dx);
+              a.y.setValue(dy);
+              if (dx !== 0 || dy !== 0) {
+                springs.push(
+                  Animated.parallel([
+                    Animated.spring(a.x, {
+                      toValue: 0,
+                      ...SPRING_FALL,
+                      useNativeDriver: true,
+                    }),
+                    Animated.spring(a.y, {
+                      toValue: 0,
+                      ...SPRING_FALL,
+                      useNativeDriver: true,
+                    }),
+                  ])
+                );
+              }
+            } else {
+              a.popScale.setValue(0.88);
+              a.x.setValue(0);
+              a.y.setValue(-(r + 1) * cellStride * 1.06);
               springs.push(
                 Animated.parallel([
+                  Animated.spring(a.popScale, {
+                    toValue: 1,
+                    friction: 7,
+                    tension: 260,
+                    useNativeDriver: true,
+                  }),
                   Animated.spring(a.x, {
                     toValue: 0,
                     ...SPRING_FALL,
@@ -368,42 +493,73 @@ export function PuzzleScreen() {
                   }),
                   Animated.spring(a.y, {
                     toValue: 0,
-                    ...SPRING_FALL,
+                    ...SPRING_SPAWN,
                     useNativeDriver: true,
                   }),
                 ])
               );
             }
-          } else {
-            a.x.setValue(0);
-            a.y.setValue(-(r + 1) * cellStride * 1.06);
-            springs.push(
-              Animated.parallel([
-                Animated.spring(a.x, {
-                  toValue: 0,
-                  ...SPRING_FALL,
-                  useNativeDriver: true,
-                }),
-                Animated.spring(a.y, {
-                  toValue: 0,
-                  ...SPRING_SPAWN,
-                  useNativeDriver: true,
-                }),
-              ])
-            );
           }
         }
-      }
 
-      setBoard(cloneBoard(after));
-      boardRef.current = cloneBoard(after);
+        setBoard(cloneBoard(after));
+        boardRef.current = cloneBoard(after);
 
-      if (springs.length === 0) {
-        then();
+        if (springs.length === 0) {
+          then();
+          return;
+        }
+        Animated.parallel(springs).start((e) => {
+          if (e.finished) then();
+        });
+      };
+
+      if (removedIds.length === 0) {
+        applyBoardAndSprings();
         return;
       }
-      Animated.parallel(springs).start((e) => {
-        if (e.finished) then();
+
+      for (const id of removedIds) {
+        const a = ensureAnim(id);
+        a.popScale.setValue(1);
+        a.popOpacity.setValue(1);
+      }
+
+      const popOne = (id: string) => {
+        const a = ensureAnim(id);
+        return Animated.parallel([
+          Animated.sequence([
+            Animated.timing(a.popScale, {
+              toValue: POP_MATCH_PEAK_SCALE,
+              duration: POP_MATCH_PEAK_MS,
+              easing: Easing.out(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(a.popScale, {
+              toValue: 0,
+              duration: POP_MATCH_OUT_MS,
+              easing: Easing.in(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ]),
+          Animated.timing(a.popOpacity, {
+            toValue: 0,
+            duration: POP_MATCH_PEAK_MS + POP_MATCH_OUT_MS - 20,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]);
+      };
+
+      const popAnims = removedIds.map((id) => popOne(id));
+      const popGroup =
+        removedIds.length > 6
+          ? Animated.stagger(POP_MATCH_STAGGER_MS, popAnims)
+          : Animated.parallel(popAnims);
+
+      popGroup.start(({ finished }) => {
+        if (!finished) return;
+        applyBoardAndSprings();
       });
     },
     [cellStride, ensureAnim]
@@ -429,9 +585,10 @@ export function PuzzleScreen() {
   );
 
   useEffect(() => {
-    const target = status === "won" ? 1 : Math.min(1, score / TARGET);
+    const target =
+      status === "won" ? 1 : Math.min(1, score / level.targetScore);
     runProgressSpring(target);
-  }, [score, status, runProgressSpring]);
+  }, [score, status, runProgressSpring, level.targetScore]);
 
   useEffect(() => {
     return () => {
@@ -443,7 +600,7 @@ export function PuzzleScreen() {
     if (status !== "play") {
       return;
     }
-    if (score < TARGET) {
+    if (score < level.targetScore) {
       winAwardedRef.current = false;
       return;
     }
@@ -451,17 +608,28 @@ export function PuzzleScreen() {
     winAwardedRef.current = true;
     const earned = coinsForWin(score);
     setLastWinCoins(earned);
-    setTotalCoins((c) => c + earned);
+    onCoinsEarned(earned);
+    onLevelCleared(level.id);
     setStatus("won");
-  }, [score, status]);
+  }, [score, status, level.targetScore, level.id, onCoinsEarned, onLevelCleared]);
 
   useEffect(() => {
     if (status !== "play") return;
-    if (moves <= 0 && score < TARGET) setStatus("lost");
-  }, [moves, score, status]);
+    if (moves <= 0 && score < level.targetScore) setStatus("lost");
+  }, [moves, score, status, level.targetScore]);
 
   useEffect(() => {
+    const stopWinMotion = () => {
+      winPotShakeLoopRef.current?.stop();
+      winGlowLoopRef.current?.stop();
+      winPotShakeLoopRef.current = null;
+      winGlowLoopRef.current = null;
+      winPotShake.setValue(0);
+      winGlowPulse.setValue(1);
+    };
+
     if (status !== "won") {
+      stopWinMotion();
       winOv.setValue(0);
       winCard.setValue(0);
       winPot.setValue(0);
@@ -472,6 +640,7 @@ export function PuzzleScreen() {
     winCard.setValue(0);
     winPot.setValue(0);
     winTitle.setValue(0);
+    stopWinMotion();
     Animated.parallel([
       Animated.timing(winOv, {
         toValue: 1,
@@ -499,9 +668,48 @@ export function PuzzleScreen() {
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
-      ]).start();
+      ]).start(({ finished }) => {
+        if (!finished) return;
+        const shakeLoop = Animated.loop(
+          Animated.sequence([
+            Animated.timing(winPotShake, {
+              toValue: 1,
+              duration: 190,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(winPotShake, {
+              toValue: -1,
+              duration: 190,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+          ])
+        );
+        winPotShakeLoopRef.current = shakeLoop;
+        shakeLoop.start();
+
+        const glowLoop = Animated.loop(
+          Animated.sequence([
+            Animated.timing(winGlowPulse, {
+              toValue: 1.07,
+              duration: 1500,
+              easing: Easing.inOut(Easing.sin),
+              useNativeDriver: true,
+            }),
+            Animated.timing(winGlowPulse, {
+              toValue: 1,
+              duration: 1500,
+              easing: Easing.inOut(Easing.sin),
+              useNativeDriver: true,
+            }),
+          ])
+        );
+        winGlowLoopRef.current = glowLoop;
+        glowLoop.start();
+      });
     });
-  }, [status, winOv, winCard, winPot, winTitle]);
+  }, [status, winOv, winCard, winPot, winTitle, winPotShake, winGlowPulse]);
 
   useEffect(() => {
     if (status !== "lost") {
@@ -793,12 +1001,12 @@ export function PuzzleScreen() {
     const nb = createBoard();
     setBoard(nb);
     boardRef.current = nb;
-    setMoves(START_MOVES);
+    setMoves(level.moves);
     setScore(0);
     setSel(null);
     setStatus("play");
     setPMode("none");
-    setHammers(STARTING_HAMMERS);
+    setHammers(level.hammers);
     setIsResolving(false);
     setLastWinCoins(0);
     winAwardedRef.current = false;
@@ -835,6 +1043,14 @@ export function PuzzleScreen() {
     inputRange: [0, 1],
     outputRange: [16, 0],
   });
+  const winPotRotate = winPotShake.interpolate({
+    inputRange: [-1, 1],
+    outputRange: ["-7deg", "7deg"],
+  });
+  const winPotBob = winPotShake.interpolate({
+    inputRange: [-1, 1],
+    outputRange: [5, -5],
+  });
 
   const lostBackdropOpacity = lostOv.interpolate({
     inputRange: [0, 1],
@@ -860,12 +1076,30 @@ export function PuzzleScreen() {
       >
         <GlassCard padding={16} intensity={32} style={{ borderColor: C.panelBorder }}>
           <View style={styles.headerRow}>
-            <View style={{ flex: 1 }}>
+            <Pressable
+              onPress={onBack}
+              hitSlop={14}
+              style={({ pressed }) => [
+                styles.headerBack,
+                pressed && { opacity: 0.75 },
+              ]}
+            >
+              <Text style={[styles.headerBackTxt, { color: labelStrong }]}>
+                ‹
+              </Text>
+            </Pressable>
+            <View style={{ flex: 1, paddingLeft: 4 }}>
               <Text style={[styles.brandSmall, { color: labelMuted }]}>
                 GEM RUSH
               </Text>
-              <Text style={[styles.brandTitle, { color: labelStrong }]}>
-                Match 3
+              <Text
+                style={[styles.brandTitle, { color: labelStrong }]}
+                numberOfLines={1}
+              >
+                {level.name}
+              </Text>
+              <Text style={[styles.levelIdTag, { color: labelMuted }]}>
+                Level {level.id}
               </Text>
             </View>
             <View style={{ alignItems: "flex-end" }}>
@@ -874,7 +1108,7 @@ export function PuzzleScreen() {
                 {score}
                 <Text style={{ color: labelMuted, fontWeight: "700" }}>
                   {" "}
-                  / {TARGET}
+                  / {level.targetScore}
                 </Text>
               </Text>
               <View style={styles.coinWallet}>
@@ -953,10 +1187,12 @@ export function PuzzleScreen() {
             <View key={row} style={styles.boardRow}>
               {Array.from({ length: COLS }, (_, col) => {
                 const tile = board[row][col];
-                const { x, y } = ensureAnim(tile.id);
+                const animKey =
+                  tile.gem >= 0 && tile.id ? tile.id : `empty-${row}-${col}`;
+                const { x, y, popScale, popOpacity } = ensureAnim(animKey);
                 return (
                   <GemTile
-                    key={tile.id}
+                    key={animKey}
                     gemIndex={tile.gem}
                     special={tile.special}
                     size={cell}
@@ -965,6 +1201,8 @@ export function PuzzleScreen() {
                     warmth={scoreProgress}
                     slideX={x}
                     slideY={y}
+                    popScale={popScale}
+                    popOpacity={popOpacity}
                     onTap={() => onGemTap(row, col)}
                     onSwipe={(dr, dc) => onGemSwipe(row, col, dr, dc)}
                   />
@@ -1003,14 +1241,16 @@ export function PuzzleScreen() {
         <View style={styles.modalOverlayFill}>
           <Animated.View
             pointerEvents="none"
-            style={[
-              StyleSheet.absoluteFill,
-              {
-                backgroundColor: "rgba(6,4,14,0.78)",
-                opacity: winBackdropOpacity,
-              },
-            ]}
-          />
+            style={[StyleSheet.absoluteFill, { opacity: winBackdropOpacity }]}
+          >
+            <LinearGradient
+              colors={[...WIN.backdrop]}
+              locations={[0, 0.42, 1]}
+              style={StyleSheet.absoluteFill}
+              start={{ x: 0.1, y: 0 }}
+              end={{ x: 0.9, y: 1 }}
+            />
+          </Animated.View>
           <Animated.View
             style={[
               styles.modalCardWrap,
@@ -1020,17 +1260,32 @@ export function PuzzleScreen() {
               },
             ]}
           >
-            <View style={styles.modalGlowRing} />
-            <GlassCard padding={24} style={styles.modalCard} intensity={52}>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.modalGlowRing,
+                { transform: [{ scale: winGlowPulse }] },
+              ]}
+            />
+            <GlassCard
+              padding={24}
+              style={styles.modalCardWarm}
+              intensity={44}
+              warm
+            >
               <View style={styles.winPotRing}>
                 <Animated.View
                   style={{
-                    transform: [{ scale: winPotScale }],
+                    transform: [
+                      { scale: winPotScale },
+                      { translateY: winPotBob },
+                      { rotate: winPotRotate },
+                    ],
                   }}
                 >
                   <Image
                     source={GOLD_POT_ASSET}
-                    style={{ width: 88, height: 88 }}
+                    style={{ width: 92, height: 92 }}
                     contentFit="contain"
                   />
                 </Animated.View>
@@ -1041,38 +1296,92 @@ export function PuzzleScreen() {
                   transform: [{ translateY: winTitleShift }],
                 }}
               >
-                <Text style={[styles.winTitle, { color: labelStrong }]}>
-                  Level clear
+                <Text style={[styles.winTitle, { color: WIN.title }]}>
+                  Level {level.id} clear
                 </Text>
-                <Text style={[styles.winSubtitle, { color: labelMuted }]}>
-                  Nice run — rewards added to your vault
+                <Text style={[styles.winSubtitle, { color: WIN.subtitle }]}>
+                  {level.name} — rewards added to your vault
                 </Text>
                 <View style={styles.winStatRow}>
-                  <Text style={[styles.winCoinsLine, { color: C.accent }]}>
+                  <Text style={[styles.winCoinsLine, { color: WIN.coins }]}>
                     +{lastWinCoins} coins
                   </Text>
                 </View>
-                <Text style={[styles.winTotalLine, { color: labelMuted }]}>
+                <Text style={[styles.winTotalLine, { color: WIN.vault }]}>
                   Vault · {totalCoins} coins
                 </Text>
               </Animated.View>
               <Animated.View style={{ opacity: winTitle }}>
-                <Pressable
-                  onPress={resetRound}
-                  style={({ pressed }) => [
-                    styles.modalBtnWrap,
-                    { marginTop: 22, opacity: pressed ? 0.92 : 1 },
+                {hasNextLevel ? (
+                  <Pressable
+                    onPress={onNextLevel}
+                    style={({ pressed }) => [
+                      styles.modalBtnWrap,
+                      { marginTop: 22, opacity: pressed ? 0.92 : 1 },
+                    ]}
+                  >
+                    <LinearGradient
+                      colors={["#ffd6a8", "#ffb347", "#ea580c"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.modalBtnGrad}
+                    >
+                      <Text style={styles.modalBtnText}>Next level</Text>
+                    </LinearGradient>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={resetRound}
+                    style={({ pressed }) => [
+                      styles.modalBtnWrap,
+                      { marginTop: 22, opacity: pressed ? 0.92 : 1 },
+                    ]}
+                  >
+                    <LinearGradient
+                      colors={["#ffd6a8", "#ffb347", "#ea580c"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.modalBtnGrad}
+                    >
+                      <Text style={styles.modalBtnText}>Play again</Text>
+                    </LinearGradient>
+                  </Pressable>
+                )}
+                <View
+                  style={[
+                    styles.winActionsRow,
+                    { marginTop: hasNextLevel ? 14 : 12 },
                   ]}
                 >
-                  <LinearGradient
-                    colors={["#ffb347", C.accent, "#ff5c3d"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.modalBtnGrad}
+                  {hasNextLevel && (
+                    <Pressable
+                      onPress={resetRound}
+                      style={({ pressed }) => [
+                        styles.winSecondaryBtn,
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.winSecondaryTxt, { color: WIN.subtitle }]}
+                      >
+                        Replay
+                      </Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    onPress={onBack}
+                    style={({ pressed }) => [
+                      styles.winSecondaryBtn,
+                      pressed && { opacity: 0.85 },
+                    ]}
                   >
-                    <Text style={styles.modalBtnText}>Play again</Text>
-                  </LinearGradient>
-                </Pressable>
+                    <Text
+                      style={[styles.winSecondaryTxt, { color: WIN.subtitle }]}
+                    >
+                      Menu
+                    </Text>
+                  </Pressable>
+                </View>
               </Animated.View>
             </GlassCard>
           </Animated.View>
@@ -1158,9 +1467,27 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     marginTop: 4,
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: "900",
-    letterSpacing: -0.8,
+    letterSpacing: -0.6,
+  },
+  headerBack: {
+    width: 38,
+    height: 40,
+    justifyContent: "center",
+    marginRight: 2,
+  },
+  headerBackTxt: {
+    fontSize: 36,
+    fontWeight: "200",
+    lineHeight: 38,
+    marginTop: -4,
+  },
+  levelIdTag: {
+    marginTop: 3,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.4,
   },
   statLabel: {
     fontSize: 11,
@@ -1324,18 +1651,24 @@ const styles = StyleSheet.create({
   },
   modalGlowRing: {
     position: "absolute",
-    top: -28,
+    top: -36,
     alignSelf: "center",
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: "rgba(255, 140, 90, 0.14)",
-    opacity: 0.9,
+    width: 216,
+    height: 216,
+    borderRadius: 108,
+    backgroundColor: "rgba(255, 150, 72, 0.28)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 200, 140, 0.35)",
   },
-  modalCard: {
+  modalCardWarm: {
     width: "100%",
-    borderWidth: 1.5,
-    borderColor: "rgba(255, 200, 160, 0.35)",
+    borderWidth: 2,
+    borderColor: "rgba(255, 195, 140, 0.55)",
+    shadowColor: "#ea580c",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.28,
+    shadowRadius: 24,
+    elevation: 16,
   },
   modalCardLost: {
     width: "100%",
@@ -1382,5 +1715,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "800",
     color: "rgba(40,24,16,0.96)",
+  },
+  winActionsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 28,
+    flexWrap: "wrap",
+  },
+  winSecondaryBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  winSecondaryTxt: {
+    fontSize: 15,
+    fontWeight: "800",
   },
 });
